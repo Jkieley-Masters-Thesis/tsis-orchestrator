@@ -1,0 +1,36 @@
+version: 2.1
+orbs:
+  slack: circleci/slack@4.4.2
+jobs:
+  run-deployer:
+    docker:
+      - image: jkieley/tsis-workload-deployer:latest
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    working_directory: /app/
+
+    steps:
+      # command will execute in trusty container
+      # and can access mongo on localhost
+      - run: bash ./entrypoint-deployer.sh
+
+  complete-build:
+    docker:
+      - image: 'cimg/base:stable'
+    steps:
+      - slack/notify:
+          event: fail
+          template: basic_fail_1
+      - slack/notify:
+          event: pass
+          template: basic_success_1
+workflows:
+  deployer:
+    jobs:
+      - run-deployer:
+          context: docker-secrets
+      - complete-build:
+          context: slack-secrets
+          requires:
+            - run-deployer
