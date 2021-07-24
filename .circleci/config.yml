@@ -2,6 +2,50 @@ version: 2.1
 orbs:
   slack: circleci/slack@4.4.2
 jobs:
+  clear-jobs:
+    docker:
+      - image: jkieley/tsis-clearer:latest
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    working_directory: /app/
+
+    steps:
+      # command will execute in trusty container
+      # and can access mongo on localhost
+      - run: bash -x ./entrypoint.sh
+
+  clear-mongo-profiled-models:
+    docker:
+      - image: docker.io/library/mongo:latest
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    steps:
+      - run:
+          command: |
+            mongo "${MONGODB_STR}" --eval 'db.getMongo().getDB("thesis").getCollection("profiledModels").remove({});'
+
+  clear-s3-bucket-profiles:
+    docker:
+      - image: jkieley/tsis-scheduler:latest
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    working_directory: /app/
+
+    steps:
+      # command will execute in trusty container
+      # and can access mongo on localhost
+      - run:
+          command: |
+            aws configure set default.region us-east-1
+            aws configure set aws_access_key_id $AWS_KEY
+            aws configure set aws_secret_access_key $AWS_ACCESS_KEY
+
+            aws s3 rm s3://jkieley-model-perf --recursive
+
+
   run-deployer:
     docker:
       - image: jkieley/tsis-workload-deployer:latest
@@ -28,8 +72,18 @@ jobs:
 workflows:
   deployer:
     jobs:
+      - clear-jobs:
+          context: docker-secrets
+      - clear-mongo-profiled-models:
+          context: docker-secrets
+      - clear-s3-bucket-profiles:
+          context: docker-secrets
       - run-deployer:
           context: docker-secrets
+          requires:
+            - clear-jobs
+            - clear-mongo-profiled-models
+            - clear-s3-bucket-profiles
       - complete-build:
           context: slack-secrets
           requires:
