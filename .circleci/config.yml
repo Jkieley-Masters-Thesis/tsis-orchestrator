@@ -14,7 +14,6 @@ jobs:
       # command will execute in trusty container
       # and can access mongo on localhost
       - run: bash -x ./entrypoint.sh
-
   clear-mongo-profiled-models:
     docker:
       - image: docker.io/library/mongo:latest
@@ -41,10 +40,9 @@ jobs:
           command: |
             aws configure set default.region us-east-1
             aws configure set aws_access_key_id $AWS_KEY
-            aws configure set aws_secret_access_key $AWS_ACCESS_KEY
+            aws configure set aws_secret_access_key $AWS_SCECRET_KEY
 
             aws s3 rm s3://jkieley-model-perf --recursive
-
 
   run-deployer:
     docker:
@@ -59,6 +57,44 @@ jobs:
       # and can access mongo on localhost
       - run: bash ./entrypoint-deployer.sh
 
+  stop-workload:
+    docker:
+      - image: curlimages/curl:latest
+
+    steps:
+      - run:
+          name: Stop Workflow and Deployer
+          command: |
+            sleep 300 # 5mins
+            curl --request POST \
+            --user $CIRCLECI_AUTH: \
+            --url "https://circleci.com/api/v2/workflow/$CIRCLE_WORKFLOW_ID/cancel" \
+
+  run-scheduler:
+    docker:
+      - image: jkieley/tsis-scheduler:latest
+        auth:
+          username: $DOCKER_USER
+          password: $DOCKER_PASS
+    working_directory: /app/
+
+    steps:
+      # command will execute in trusty container
+      # and can access mongo on localhost
+      - run:
+          command: |
+            aws configure set default.region us-west-2
+            aws configure set aws_access_key_id $AWS_KEY
+            aws configure set aws_secret_access_key $AWS_SCECRET_KEY
+
+            export FROM_CLUSTER_KUBE_CONFIG_FILE=/app/config/asu-on-prem-config
+            export REGIONS_FILE=/app/config/regions.txt
+            export CLUSTER_IS_CREATED=0
+            export CLUSTER_FILES_ARE_DOWNLOADED=0
+            export AWS_DEFAULT_REGION=us-west-2
+
+            bash ./entrypoint-scheduler.sh
+
   complete-build:
     docker:
       - image: 'cimg/base:stable'
@@ -70,15 +106,24 @@ jobs:
           event: pass
           template: basic_success_1
 workflows:
-  deployer:
+  orchestrator:
     jobs:
-      - clear-jobs:
-          context: docker-secrets
       - clear-mongo-profiled-models:
           context: docker-secrets
       - clear-s3-bucket-profiles:
           context: docker-secrets
+      - clear-jobs:
+          context: docker-secrets
       - run-deployer:
+          context: docker-secrets
+          requires:
+            - clear-jobs
+            - clear-mongo-profiled-models
+            - clear-s3-bucket-profiles
+      - stop-workload:
+          requires:
+            - run-deployer
+      - run-scheduler:
           context: docker-secrets
           requires:
             - clear-jobs
@@ -87,4 +132,4 @@ workflows:
       - complete-build:
           context: slack-secrets
           requires:
-            - run-deployer
+            - stop-workload
